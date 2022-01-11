@@ -32,11 +32,50 @@ RUN chmod u+x ./*.sh
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
+# ~~~ Download supercronic stage ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+FROM alpine:3.8 as download-supercronic-stage
+WORKDIR /supercronic
+
+ENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.1.12/supercronic-linux-amd64 \
+    SUPERCRONIC=supercronic-linux-amd64 \
+    SUPERCRONIC_SHA1SUM=048b95b48b708983effb2e5c935a1ef8483d9e3e
+
+RUN \
+  # su-exec required for running as not-root user
+  # tini required for process control in the entrypoint
+  apk add --no-cache \
+    curl \
+    && \
+  echo "Downloading supercronic from ${SUPERCRONIC_URL}" && \
+  curl -fsSLO "$SUPERCRONIC_URL" && \
+  # The following string must have two spaces between the hash and the filename
+  # else sha1sum check won't work
+  echo "Verifying sha1 hash ${SUPERCRONIC_SHA1SUM}" && \
+  echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - && \
+  chmod +x "$SUPERCRONIC" && \
+  # Create a symlink with a simpler name
+  ln -s "${SUPERCRONIC}" supercronic && \
+  echo "Supercronic download stage complete"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Final build stage
 
 FROM alpine:3.8
+
+# Set some useful defualts
+ENV \
+  # The log-sender script to run
+  LOG_SENDER_SCRIPT="/stroom-log-sender/send_to_stroom.sh" \
+  # The root path of all the logs, can be used in the crontab.txt file
+  LOGS_DIR="/stroom-log-sender/log-volumes" \
+  # The environment, e.g. DEV/REF/OPS/etc.
+  ENVIRONMENT="DEV" \
+  # The maximum random delay in secs to wait to balance network load
+  MAX_DELAY_SECS="15"
 
 #This is the root dir for all our files/scripts
 WORKDIR /stroom-log-sender
@@ -51,11 +90,14 @@ VOLUME /stroom-log-sender/certs/
 # see https://github.com/krallin/tini/issues/8
 ENTRYPOINT ["/sbin/tini", "--", "/stroom-log-sender/docker-entrypoint.sh"]
 
-# bash required for send_to_stroom.sh
+# Start supercronic with our crontab
+CMD [ "/usr/local/bin/supercronic", "/stroom-log-sender/config/crontab.txt" ]
+
+# bash required for send_to_stroom.sh bash script
 # coreutils required for 'date' command to output millis
 # curl required for sending logs
-# gettext needed for 'envsubst' using in the entrypoint script
 # procps needed for a richer 'ps' command as used in send_to_stroom.sh
+# su-exec required for running stroom as not-root user
 # tini required for process control in the entrypoint
 # Create a user with no home and no shell
 # The log-volumes dir is where we expect volumes to be mounted 
@@ -65,8 +107,8 @@ RUN echo "http_proxy: $http_proxy" && \
         bash \
         coreutils \
         curl \
-        gettext \
         procps \
+        su-exec \
         tini && \
     addgroup -g 1000 -S sender && \
     adduser -u 1000 -S -s /bin/false -D -G sender sender && \
@@ -74,20 +116,17 @@ RUN echo "http_proxy: $http_proxy" && \
     mkdir -p /stroom-log-sender/config && \
     mkdir -p /stroom-log-sender/certs && \
     mkdir -p /stroom-log-sender/log-volumes && \
-    chown -R sender:sender /stroom-log-sender
+    chown -R sender:sender /stroom-log-sender && \
+    echo "Completed RUN"
+
+# Copy in the supercronic binary downloaded in the intermediate build stage
+COPY --from=download-supercronic-stage /supercronic /usr/local/bin
 
 # Copy in all the send logs scripts downloaded in the intermediate build stage
-COPY \
-  --chown=sender:sender \
-  --from=send-logs-scripts-stage \
-  /scripts \
-  /stroom-log-sender
+COPY --chown=sender:sender --from=send-logs-scripts-stage /scripts /stroom-log-sender
 
 # Copy in the scripts for running the container
-COPY \
-  --chown=sender:sender \
-  docker-entrypoint.sh \
-  /stroom-log-sender/
+COPY --chown=sender:sender docker-entrypoint.sh /stroom-log-sender/
 
 # Label the image so we can see what commit/tag it came from
 ARG GIT_COMMIT=unspecified
