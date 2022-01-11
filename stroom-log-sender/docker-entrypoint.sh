@@ -64,6 +64,6 @@ if [ "$(id -u)" = '0' ]; then
     echo "Quitting"
     exit 1
   fi
+else
+  echo "Error: root user required"
 fi
-
-#echo "End of entrypoint"
