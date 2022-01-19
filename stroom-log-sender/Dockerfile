@@ -91,7 +91,7 @@ VOLUME /stroom-log-sender/certs/
 ENTRYPOINT ["/sbin/tini", "--", "/stroom-log-sender/docker-entrypoint.sh"]
 
 # Start supercronic with our crontab
-CMD [ "/usr/local/bin/supercronic", "/stroom-log-sender/config/crontab.txt" ]
+CMD ["/usr/local/bin/supercronic", "-passthrough-logs", "-quiet", "/stroom-log-sender/config/crontab.txt"]
 
 # bash required for send_to_stroom.sh bash script
 # coreutils required for 'date' command to output millis
